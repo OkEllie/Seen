@@ -1,0 +1,852 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#040607">
+<title>SEEN mobile — reaction engine</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@500;600;800&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+<style>
+/* SEEN — a webcam that reacts back. Recreation of the "my app helps you feel seen" idea:
+   webcam → face + hand tracking (MediaPipe) → 42 triggers → 140+ reaction memes (GIPHY or built-in cards). */
+:root{--bg:#040607;--hud:#8ff0ff;--line:rgba(140,235,255,.55);--win:#0b2738;--bar1:#0f3a55;--bar2:#16658a;--red:#ff3b30;--ink:#eaf9ff;
+--mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;--sans:Inter,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);font:14px/1.45 var(--sans);overflow:hidden}
+button,input,select{font:inherit;color:inherit}
+a{color:var(--hud)}
+#app{position:fixed;inset:0;display:flex;flex-direction:column}
+#rain{width:100%;height:16vh;display:block;background:#000;flex:none}
+#app.norain #rain{display:none}
+#stage{position:relative;flex:1;overflow:hidden;background:radial-gradient(circle at 50% 40%,#13202a,#06090b)}
+#cam{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+#stage.mirror #cam{transform:scaleX(-1)}
+#ov{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+.hud{position:absolute;font:500 11px/1 var(--mono);letter-spacing:.08em;color:var(--hud);text-transform:uppercase;text-shadow:0 0 8px rgba(120,230,255,.5);pointer-events:none}
+#pill{top:14px;left:50%;transform:translateX(-50%);padding:8px 12px;border:1px solid var(--line);border-radius:6px;background:rgba(6,20,28,.55);display:flex;gap:10px;align-items:center;white-space:nowrap}
+#pill i{width:7px;height:7px;border-radius:50%;background:#5cf2a5;box-shadow:0 0 8px #5cf2a5;animation:pulse 1.6s infinite}
+#pill b{opacity:.35;font-weight:500}
+#clock{top:18px;right:18px;font-weight:700}
+#reading{top:52px;left:50%;transform:translateX(-50%);display:none;gap:8px;align-items:center;white-space:nowrap}
+#reading.on{display:flex}
+#reading .m{width:70px;height:3px;background:rgba(140,235,255,.2)}
+#reading .m s{display:block;height:100%;width:0;background:var(--hud)}
+#status{left:16px;bottom:16px;opacity:.85}
+#log{position:absolute;left:16px;bottom:38px;width:min(340px,60vw);font:500 11px/1.65 var(--mono);color:rgba(220,248,255,.85);pointer-events:none;text-shadow:0 1px 3px #000}
+#log div{animation:fadein .3s}
+#log em{color:var(--hud);font-style:normal}
+#tools{position:absolute;right:14px;bottom:12px;display:flex;gap:6px;z-index:30;flex-wrap:wrap;justify-content:flex-end}
+.tb{border:1px solid var(--line);background:rgba(6,20,28,.75);padding:9px 12px;border-radius:6px;font:500 11px var(--mono);letter-spacing:.06em;text-transform:uppercase;cursor:pointer;color:var(--hud);min-height:36px;display:inline-flex;align-items:center}
+.tb:hover,.tb:focus-visible{background:rgba(20,70,95,.95);outline:none}
+#wins{position:absolute;inset:0;pointer-events:none;z-index:20}
+.win{position:absolute;width:clamp(240px,30vw,420px);border:1px solid rgba(150,235,255,.8);border-radius:6px;background:var(--win);box-shadow:0 0 26px rgba(80,200,255,.35),0 18px 40px rgba(0,0,0,.55);overflow:hidden;pointer-events:auto;animation:winin .28s cubic-bezier(.2,.9,.3,1.2)}
+.win.out{animation:winout .25s forwards}
+.wbar{display:flex;align-items:center;gap:8px;padding:7px 9px;background:linear-gradient(90deg,var(--bar1),var(--bar2));font:700 10.5px/1 var(--mono);letter-spacing:.1em;cursor:grab;user-select:none;touch-action:none;white-space:nowrap}
+.wbar .dia{width:9px;height:9px;transform:rotate(45deg);background:#9ff3ff;box-shadow:0 0 6px #9ff3ff;flex:none}
+.wbar .st{margin-left:auto;font-size:9px;opacity:.85;display:flex;gap:5px;align-items:center}
+.wbar .st:before{content:"";width:5px;height:5px;border-radius:50%;background:#ffcc4d}
+.win.live .wbar .st:before{background:#5cf2a5;box-shadow:0 0 6px #5cf2a5}
+.wx{border:0;background:none;color:#cdf6ff;cursor:pointer;font:700 14px var(--mono);padding:0 2px;margin-left:4px}
+.wbody{position:relative;background:radial-gradient(120% 90% at 50% 40%,#1d6f96,#0a2333 70%);min-height:170px}
+.conn{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;padding:38px 20px 30px;text-align:center}
+.spin{width:40px;height:40px;border-radius:50%;border:2px solid rgba(160,240,255,.25);border-top-color:#a9f4ff;animation:spin .8s linear infinite;box-shadow:0 0 14px rgba(130,230,255,.4)}
+.conn h4{margin:4px 0 0;font:600 14px var(--sans);color:#e7fbff}
+.conn small{font:500 10px var(--mono);letter-spacing:.08em;color:#9fe9ff;opacity:.8}
+.prog{width:70%;height:2px;background:rgba(160,240,255,.2);margin-top:6px}
+.prog s{display:block;height:100%;width:0;background:#a9f4ff;box-shadow:0 0 8px #a9f4ff;transition:width 1.2s linear}
+.cap{background:#f4f6f7;color:#161616;font:800 clamp(16px,1.5vw,21px)/1.2 var(--sans);text-align:center;padding:12px 14px;overflow-wrap:anywhere}
+.media{position:relative;background:#000;display:flex;justify-content:center}
+.media video,.media img,.media canvas{display:block;width:100%;max-height:46vh;object-fit:contain;background:#000}
+.flip{transform:scaleX(-1)}
+.card{width:100%;aspect-ratio:4/3;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;background:radial-gradient(circle at 50% 40%,#22384a,#05080b 75%);overflow:hidden;padding:10px}
+.card .e{font-size:clamp(44px,5.5vw,76px);line-height:1.1;animation:bop .7s ease-in-out infinite alternate;white-space:nowrap}
+.card .n{font:800 18px var(--sans);color:#fff;text-align:center}
+.card .h{font:500 10px var(--mono);color:#8fdcef;opacity:.85;text-align:center}
+.wfoot{display:flex;justify-content:space-between;gap:8px;padding:6px 9px;font:500 9px var(--mono);letter-spacing:.1em;color:#9fe9ff;background:#081c28}
+.anal{position:absolute;left:8px;bottom:8px;display:flex;flex-direction:column;gap:3px;align-items:flex-start}
+.anal span{font:700 11px var(--mono);background:rgba(0,0,0,.62);color:#fff;padding:3px 7px;border-left:3px solid var(--red)}
+.panel{position:fixed;top:0;right:0;bottom:0;width:min(520px,100vw);background:#071118;border-left:1px solid var(--line);z-index:60;transform:translateX(105%);transition:transform .25s;display:flex;flex-direction:column}
+.panel.on{transform:none}
+.ph{display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid rgba(140,235,255,.2);font:700 12px var(--mono);letter-spacing:.1em;color:var(--hud);text-transform:uppercase}
+.ph .tb{margin-left:auto}
+.pb{overflow:auto;padding:14px 16px 48px;flex:1}
+.grp{font:700 11px var(--mono);color:var(--hud);letter-spacing:.1em;margin:18px 0 8px;text-transform:uppercase}
+.tr{border:1px solid rgba(140,235,255,.18);border-radius:8px;padding:10px 12px;margin-bottom:8px;background:#0a1922}
+.tr h5{margin:0;font:700 15px var(--sans);display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.tr p{margin:2px 0 6px;color:#a9c7d1;font-size:13px}
+.tr .mm{font-size:12px;color:#d6eef5;opacity:.8}
+.tr .row{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap;align-items:center}
+.chip{font:500 10px var(--mono);border:1px solid rgba(140,235,255,.35);border-radius:20px;padding:2px 8px;color:var(--hud);font-weight:500}
+.field{margin-bottom:16px}
+.field>label{display:block;font-weight:600;margin-bottom:6px}
+.inp{width:100%;padding:10px 12px;border-radius:7px;border:1px solid rgba(140,235,255,.3);background:#0b1b24;font-size:16px}
+.inp:focus{outline:2px solid var(--hud);outline-offset:1px}
+.hint{font-size:12.5px;color:#9ab8c2;margin-top:6px}
+.sw{display:flex;align-items:center;gap:10px;margin:10px 0;cursor:pointer}
+.sw input{width:18px;height:18px;accent-color:#8ff0ff}
+input[type=range]{width:100%;accent-color:#8ff0ff}
+.rv{float:right;font:500 12px var(--mono);color:var(--hud)}
+.btn{border:0;border-radius:8px;padding:12px 18px;background:#9ff3ff;color:#03202b;font-weight:800;cursor:pointer;min-height:44px}
+.btn.ghost{background:transparent;color:var(--hud);border:1px solid var(--line)}
+.btn:disabled{opacity:.6;cursor:wait}
+#start{position:fixed;inset:0;z-index:80;display:flex;align-items:center;justify-content:center;background:radial-gradient(circle at 50% 30%,#0a2837,#020406);padding:20px}
+#start.off{display:none}
+#start .box{width:min(540px,100%);max-height:100%;overflow:auto;padding:4px}
+#start h1{font:800 clamp(44px,9vw,72px)/1 var(--sans);margin:0 0 8px;letter-spacing:-.03em;text-shadow:0 0 30px rgba(120,230,255,.35)}
+#start .tag{font:500 12px var(--mono);color:var(--hud);letter-spacing:.12em;text-transform:uppercase;margin-bottom:18px}
+#start p{color:#c6dde4;margin:0 0 18px}
+details{margin-top:6px}summary{cursor:pointer;color:var(--hud)}
+ol{padding-left:20px;margin:8px 0}
+.err{color:#ff9d95;font-size:13px;margin-top:12px;min-height:1em}
+#toast{position:fixed;left:50%;top:74px;transform:translateX(-50%);background:#0b2a39;border:1px solid var(--line);padding:9px 14px;border-radius:8px;font:500 12px var(--mono);z-index:90;opacity:0;transition:opacity .2s;pointer-events:none;max-width:90vw;text-align:center}
+#toast.on{opacity:1}
+#dbg{position:absolute;right:14px;top:44px;width:260px;max-height:calc(100% - 110px);overflow:auto;background:rgba(0,0,0,.72);border:1px solid rgba(140,235,255,.3);border-radius:6px;padding:8px 10px;font:500 10px/1.55 var(--mono);display:none;z-index:25;pointer-events:none}
+#dbg.on{display:block}
+#dbg .b{display:flex;gap:6px;align-items:center}
+#dbg .b span{width:120px;flex:none;overflow:hidden;white-space:nowrap}
+#dbg .b s{display:block;height:4px;background:var(--hud);max-width:110px}
+kbd{font:500 11px var(--mono);border:1px solid rgba(140,235,255,.4);border-radius:4px;padding:1px 5px}
+@keyframes pulse{50%{opacity:.35}}
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes fadein{from{opacity:0;transform:translateY(4px)}}
+@keyframes winin{from{opacity:0;transform:scale(.92) translateY(10px)}}
+@keyframes winout{to{opacity:0;transform:scale(.95)}}
+@keyframes bop{from{transform:translateY(-4px) rotate(-3deg)}to{transform:translateY(4px) rotate(3deg)}}
+@media (max-width:600px){#rain{height:10vh}.win{width:74vw}#log{display:none}#clock{top:52px}#pill{font-size:9.5px}#status{bottom:66px}}
+.tb,.btn,.wx,.sw{touch-action:manipulation;-webkit-tap-highlight-color:transparent}
+#bFlip{display:none}
+.monly{display:none}body.m .monly{display:inline}
+.warn{color:#ffd28a}
+/* phone layout */
+body.m #rain{height:7vh}
+body.m #pill{top:calc(env(safe-area-inset-top) + 10px);font-size:9.5px;padding:6px 10px}
+body.m #clock{top:calc(env(safe-area-inset-top) + 46px);right:14px}
+body.m #reading{top:calc(env(safe-area-inset-top) + 46px);font-size:11px}
+body.m #log{display:none}
+body.m #status{left:12px;bottom:calc(env(safe-area-inset-bottom) + 76px);font-size:9.5px}
+body.m #tools{left:0;right:0;bottom:0;padding:10px max(10px,env(safe-area-inset-right)) calc(env(safe-area-inset-bottom) + 10px) max(10px,env(safe-area-inset-left));display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;background:linear-gradient(rgba(0,0,0,0),rgba(0,0,0,.7))}
+body.m .tb{justify-content:center;min-height:48px;padding:8px 4px}
+body.m #bFlip{display:inline-flex}
+body.m .win{width:min(90vw,420px)}
+body.m .media video,body.m .media img,body.m .media canvas{max-height:22vh}
+body.m .card{aspect-ratio:auto;height:22vh}
+body.m .card .e{font-size:44px}
+body.m .cap{font-size:17px;padding:9px 12px}
+body.m .conn{padding:20px 16px 16px}
+body.m .wbody{min-height:120px}
+body.m #dbg{top:auto;bottom:calc(env(safe-area-inset-bottom) + 100px);right:8px;width:210px;max-height:38vh}
+body.m .ph{padding-top:calc(env(safe-area-inset-top) + 12px)}
+body.m .pb{padding-bottom:calc(env(safe-area-inset-bottom) + 48px)}
+body.m #start{padding:calc(env(safe-area-inset-top) + 16px) 18px calc(env(safe-area-inset-bottom) + 16px);align-items:flex-start}
+body.m #toast{top:calc(env(safe-area-inset-top) + 80px)}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+<div id="app">
+  <canvas id="rain"></canvas>
+  <div id="stage" class="mirror">
+    <video id="cam" playsinline muted autoplay></video>
+    <canvas id="ov"></canvas>
+    <div id="pill" class="hud"><i></i>Live <b>|</b> Reaction engine / 001</div>
+    <div id="clock" class="hud">00.00</div>
+    <div id="reading" class="hud"><span>reading:</span><span id="rdName"></span><span class="m"><s id="rdBar"></s></span></div>
+    <div id="log"></div>
+    <div id="status" class="hud">standby</div>
+    <div id="wins"></div>
+    <div id="dbg"></div>
+    <div id="tools">
+      <button class="tb" id="bRand" title="Random reaction (Space)">Random</button>
+      <button class="tb" id="bLib" title="Every trigger and meme (L)">Reactions</button>
+      <button class="tb" id="bFlip" title="Switch front/back camera">Flip</button>
+      <button class="tb" id="bSet" title="Settings">Settings</button>
+    </div>
+  </div>
+</div>
+
+<div id="start">
+  <div class="box">
+    <h1>SEEN</h1>
+    <div class="tag">a webcam that reacts back</div>
+    <p>Make a face or a gesture. SEEN reads it and answers with a matching reaction meme: <b>42 triggers, 140 memes</b>, plus replays of your own past moments.</p>
+    <div class="field"><label for="iName">Your name <span style="opacity:.6;font-weight:500">for captions</span></label><input id="iName" class="inp" type="text" placeholder="e.g. Athrin" maxlength="24" autocomplete="off"></div>
+    <div class="field"><label for="iKey">GIPHY API key</label><input id="iKey" class="inp" type="password" placeholder="Paste a key to pull real GIFs" autocomplete="off">
+      <div class="hint">Your key is already filled in, so every trigger pulls the real meme GIF. Without a key you'd get built-in reaction cards.</div></div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap"><button class="btn" id="go">Start camera</button><button class="btn ghost" id="manual">No camera: manual mode</button></div>
+    <div class="err" id="err"></div>
+    <p class="hint warn" id="secure" hidden></p>
+    <p class="hint" style="margin-top:16px">Your video stays on this device: all tracking runs in the browser. Only the meme search words go to GIPHY.</p>
+  </div>
+</div>
+
+<aside id="lib" class="panel" aria-label="Reactions">
+  <div class="ph">Reactions <span class="chip" id="libCount"></span><button class="tb" data-close>Close</button></div>
+  <div class="pb">
+    <input id="libQ" class="inp" type="search" placeholder="Search triggers or memes" autocomplete="off">
+    <p class="hint">Tap <b>Fire</b> to test any reaction. <b>+ Your clip</b> adds your own GIF or video to a trigger (saved in this browser).<span class="monly"> Two-hand gestures work best with the phone propped up. Tap a pop-up to dismiss it.</span></p>
+    <div id="libList"></div>
+  </div>
+</aside>
+
+<aside id="set" class="panel" aria-label="Settings">
+  <div class="ph">Settings<button class="tb" data-close>Close</button></div>
+  <div class="pb">
+    <div class="field"><label for="sName">Your name</label><input id="sName" class="inp" data-k="name" type="text" maxlength="24" autocomplete="off"></div>
+    <div class="field"><label for="sKey">GIPHY API key</label><input id="sKey" class="inp" data-k="key" type="password" autocomplete="off">
+      <div class="row" style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap"><button class="tb" id="testKey">Test key</button><button class="tb" id="clrCache">Clear GIF cache</button></div>
+      <div class="hint" id="usage"></div></div>
+    <div class="field"><label for="sRating">GIF rating</label><select id="sRating" class="inp" data-k="rating"><option value="g">G</option><option value="pg">PG</option><option value="pg-13">PG-13</option><option value="r">R</option></select></div>
+    <div class="field"><label for="sSens">Sensitivity <span class="rv" id="vSens"></span></label><input id="sSens" data-k="sens" type="range" min="0.6" max="1.6" step="0.05"><div class="hint">Higher fires on smaller expressions. Lower if memes pop up by accident.</div></div>
+    <div class="field"><label for="sCool">Pause between reactions <span class="rv" id="vCool"></span></label><input id="sCool" data-k="cool" type="range" min="0.6" max="8" step="0.2"></div>
+    <div class="field"><label for="sLife">Window stays open <span class="rv" id="vLife"></span></label><input id="sLife" data-k="life" type="range" min="3" max="15" step="1"></div>
+    <div class="field"><label for="sMax">Max windows at once <span class="rv" id="vMax"></span></label><input id="sMax" data-k="maxWin" type="range" min="1" max="5" step="1"></div>
+    <label class="sw"><input type="checkbox" data-k="archive">Archive replays: record your moments and replay them later</label>
+    <label class="sw"><input type="checkbox" data-k="analysis">Analysis pop-ups: freeze-frame "scans" of you</label>
+    <label class="sw"><input type="checkbox" data-k="rain">Digital rain band</label>
+    <label class="sw"><input type="checkbox" data-k="mirror">Mirror camera</label>
+    <label class="sw"><input type="checkbox" data-k="hands">Hand tracking (turn off to save battery: face triggers only)</label>
+    <label class="sw"><input type="checkbox" data-k="debug">Debug readout (tracking values)</label>
+    <div class="grp">Shortcuts</div>
+    <div class="hint"><kbd>Space</kbd> random reaction · <kbd>L</kbd> reactions list · <kbd>D</kbd> debug · <kbd>R</kbd> rain · <kbd>Esc</kbd> close windows</div>
+    <div class="grp">Credits</div>
+    <div class="hint">Tracking by Google MediaPipe. GIFs Powered by GIPHY. Meme picks based on GIPHY and Tenor's yearly most-shared lists.</div>
+  </div>
+</aside>
+<div id="toast"></div>
+
+<script>
+{
+const $=s=>document.querySelector(s);
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+const rnd=(a,b)=>a+Math.random()*(b-a);
+const pick=a=>a[Math.floor(Math.random()*a.length)];
+const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+/* ---------- config + settings ---------- */
+const MPV='1.2.2';
+const MP={lib:`https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MPV}/vision_bundle.mjs`,wasm:`https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MPV}/wasm`,
+  face:'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task',
+  hand:'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task'};
+const BUILTIN_GIPHY='zAs7phbSmROwhAyDOF7fWdI5O5TtNgTN';
+const FORCE_MOBILE=true;
+const MOBILE=FORCE_MOBILE||(matchMedia('(pointer:coarse)').matches&&Math.min(screen.width,screen.height)<820);
+document.body.classList.toggle('m',MOBILE);
+const store={get(k,d){try{const v=localStorage.getItem('seen.'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('seen.'+k,JSON.stringify(v))}catch(e){}}};
+const DEF={name:'',key:BUILTIN_GIPHY,rating:'pg-13',sens:1,cool:2,life:MOBILE?6:7,maxWin:MOBILE?2:3,rain:true,mirror:true,hands:true,archive:true,analysis:true,debug:false};
+const S=Object.assign({},DEF,store.get('settings',{}));
+if(!S.key&&!store.get('seeded',false))S.key=BUILTIN_GIPHY;
+store.set('seeded',true);
+const save=()=>store.set('settings',S);
+let facing='user';const mir=()=>!!S.mirror&&facing==='user';
+const nm=()=>(S.name||'').trim()||'bro';
+const fill=s=>s.replace(/\{n\}/g,nm());
+
+/* ---------- meme library: Label|GIPHY search|caption|emoji card ---------- */
+const G={face:'Face',motion:'Motion',hands:'Hands',combo:'Hands + face'};
+const RAW=[
+['shock','face','Shock','Drop your jaw and widen your eyes','shock signal',['Surprised Pikachu|surprised pikachu|{n} when the plot twist hits|😮⚡','And I Oop|and i oop|and I oop—|😳💅','Shook|shook reaction|{n} is SHOOK|😱😱😱','Wait what|wait what|wait… WHAT|❓😮❓']],
+['laugh','face','Laugh','Big smile with your mouth open','humor signal',['Crying laughing|crying laughing|{n} could not hold it together 😭😭|😂😂😂','LMAO|lmao|LMAOOOO 💀|💀💀💀','Wheeze|wheeze laugh|the wheeze is real|🤣🌬️','Can\'t breathe|cant breathe laughing|someone check on {n}|🤣🚑']],
+['smile','face','Big smile','Hold a big closed-mouth smile','joy signal',['Yay|yay|yaaay 🥳|🥳🎉','Happy dance|happy dance|{n} rn|💃🕺','Love gnome|love gnome|wholesome levels: critical|🍄💖','Big W|big w|W {n} W|🏆✨']],
+['smirk','face','Smirk','Smile with one side of your mouth','mischief signal',['Smirk|smirk|{n} knows exactly what he did|😏','Evil plan|evil laugh|the plan is in motion|😈','Sneaky|sneaky|sneaky sneaky|🫣😏']],
+['pout','face','Kiss face','Pucker your lips','affection signal',['Chef\'s kiss|chefs kiss|chef\'s kiss 🤌|🤌💋','Mwah|mwah|mwah 💋|💋💋','Blowing kisses|blowing kiss|sending love|😘😘😘']],
+['puff','face','Cheek puff','Puff out your cheeks','pressure signal',['Bruh|bruh|bruh.|😐🗿','Trying not to laugh|trying not to laugh|{n} holding it in|😤😂','Holding breath|holding breath|hold… it… in…|🫨']],
+['sad','face','Sad face','Frown with your brows pushed up','grief signal',['Sad Pikachu|sad pikachu|{n} got left on read|🥺💧','Crying baby|crying baby|me fr|😭😭😭','Tiny violin|tiny violin|playing the world\'s smallest violin|🎻🥲','Pain|pain meme|pain.|💔']],
+['angry','face','Angry','Scrunch your brows down hard','rage signal',['Grrr|stitch grrr|grrrrr|😠','My existence angers him|my existence angers him|my existence angers him|😤','So frustrated|so frustrated|so. frustrated.|🤬','Rage mode|rage|{n} has entered rage mode|💢💢💢']],
+['brows','face','Eyebrow raise','Raise both eyebrows, mouth closed','curiosity signal',['Interesting|interesting meme|interesting…|🧐','Oh really|oh really|oh really now|🤨','The eyebrows|eyebrow raise|the eyebrows said it all|🤨🤨']],
+['sus','face','One eyebrow','Raise one eyebrow (or drop one)','suspicion signal',['Sus|sus|kinda sus ngl|🤨📮','Suspicious|suspicious|I don\'t trust like that|🕵️','Skeptical|skeptical|skeptical rn|🤔']],
+['squint','face','Squint','Narrow your eyes, no smile','doubt signal',['Not sure if|not sure if|not sure if serious or trolling|😑🔍','Squinting|squinting|squinting at this one|😒','I see you|i see you|I see you 👀|👀']],
+['side','face','Side eye','Look sideways without turning your head','judgment signal',['Side eye|side eye|the side eye|👀😒','The audacity|the audacity|the AUDACITY|😤👀','None of my business|but thats none of my business|but that\'s none of my business|🐸☕']],
+['tilt','face','Head tilt','Tilt your head to one side','confusion signal',['Confused dog|confused dog head tilt|huh?|🐶❓','Confused math|confused math|{n} doing the math|🧮😵‍💫','Huh|huh confused|huh??|❓❓']],
+['away','face','Look away','Turn your head away for a second','evasion signal',['Awkward look away|monkey puppet look away|{n} pretending he didn\'t see that|🐒','Bored|bored|ok anyway|🥱','Not my problem|not my problem|not my problem|🫥']],
+['deadpan','face','Deadpan stare','Hold a blank face for 5 seconds','stillness signal',['Bored office stare|bored stanley|this meeting could\'ve been an email|😑','Exhausted|tom and jerry tired|{n} at 3am|😮‍💨','Still waiting|waiting skeleton|still waiting…|💀⏳','Unimpressed|unimpressed|unimpressed.|😐']],
+['blink','motion','Blink combo','Blink three times fast','disbelief signal',['Blinking guy|blinking guy meme|excuse me?|😐😐😐','Excuse me|excuse me what|excuse me??|🫥','Run that back|what did you just say|run that back|🔁']],
+['shake','motion','Head shake','Shake your head no','refusal signal',['Nope crab|nope crab|nope.|🦀🚫','Nope|nope|nope nope nope|🙅','Absolutely not|absolutely not|absolutely not|⛔','No no no|no no no|no no no no no|🙅‍♂️']],
+['nod','motion','Nod','Nod your head yes','consensus signal',['Yes yes yes|yes yes yes|YES|✅✅✅','Real|so real|real. so real.|💯','Exactly|exactly|EXACTLY|🎯','Agreed|agreed nodding|agreed|🤝']],
+['gone','motion','Leave the frame','Walk out of view','absence signal',['Backing into bushes|backing into bushes|{n} has left the chat|🌳🚪','Vanish|vanish disappear|*vanishes*|💨','Peace out|peace out|peace out ✌️|✌️']],
+['wave','motion','Wave','Wave an open hand side to side','greeting signal',['Hi|hi wave|hiiii|👋','Bye bye|bye bye|bye bye 👋|👋😌','Hello there|hello there|hello there|🫡']],
+['clap','motion','Clap','Clap twice','applause signal',['Slow clap|slow clap|*slow clap*|👏','Standing ovation|standing ovation|standing ovation|👏👏👏','Clapping seal|clapping seal|arf arf 👏|🦭👏','Bravo|bravo|bravo bravo|🌹👏']],
+['skill','motion','Pen flip / finger tricks','Fidget fast with your fingers: flip a pen!','social response',['Pen flip reaction|crowd goes wild|{n} pen flip reaction 🔥🔥🔥🔥🔥💯|🔥🔥🔥🔥🔥','Sheesh|sheesh|SHEEEESH|🥶🔥','Mic drop|mic drop|*mic drop*|🎤⬇️','The skills|nunchuck skills|the skills are unreal|🥷']],
+['tup','hands','Thumbs up','Thumb up, fist closed','approval signal',['Of course|of course|of course|👍','Nice|nice thumbs up|nice.|👍✨','Approved|approved|approved ✅|✅','Good job|good job|good job buddy|👏👍']],
+['tdown','hands','Thumbs down','Thumb down, fist closed','disapproval signal',['Big L|big l|that\'s an L|🇱','Boo|booing|boooo 🍅|🍅👎','Disappointed|disappointed|I\'m not mad, just disappointed|😞']],
+['peace','hands','Peace sign','Index + middle finger up','farewell signal',['Deuces|deuces|deuces ✌️|✌️😎','Slay|slay|slayyy|💅✨','Peace and love|peace|peace and love|☮️']],
+['point','hands','Point up','Raise one index finger','objection signal',['Wait a minute|wait a minute|wait a minute…|☝️🤔','Um actually|um actually|um, actually ☝️🤓|🤓☝️','I have an idea|i have an idea|{n} just had an idea|💡']],
+['fist','hands','Fist','Hold up a closed fist','power signal',['Let\'s go|lets go|LET\'S GOOOO|🔥🔥🔥','Fist pump|fist pump|yes!|✊','Flex|flex|{n} flexing rn|💪💪','Victory|victory|victory royale|🏆']],
+['palm','hands','Stop hand','Hold up one open palm, still','halt signal',['Hold up|hold up wait|hold up hold up|✋','Stop|stop right there|STOP.|🛑','Talk to the hand|talk to the hand|talk to the hand|🖐️']],
+['rock','hands','Rock on','Index + pinky up','hype signal',['Rock on|rock on|ROCK ON|🤘','Headbang|headbang|{n} headbanging|🤘🎸','That\'s metal|heavy metal|that\'s metal|⚡🤘']],
+['shaka','hands','Hang loose','Thumb + pinky out','chill signal',['Hang loose|hang loose|hang loose 🤙|🤙🌊','Chill vibes|chill vibes|chill vibes only|😎🌴','Call me|call me|call me maybe|🤙📞']],
+['gun','hands','Finger guns','Thumb up, index pointed sideways','charm signal',['Finger guns|finger guns|ayyy 👉😎👉|👉😎👉','Ayy|ayy|ayyyy|😎','Pew pew|pew pew|pew pew|💥']],
+['ok','hands','OK sign','Thumb touches index, other fingers up','precision signal',['Perfect|perfect|perfection|👌','Noice|noice|noice|👌😏','Just right|just right|just right|✨👌']],
+['heart','hands','Heart hands','Make a heart with both hands','love signal',['Heart hands|heart hands|love this|🫶','Aww|aww|awww|🥹','Heart eyes|heart eyes|{n} in love|😍']],
+['prayer','hands','Prayer hands','Palms together below your chin','devotion signal',['Please|please begging|pleaseeee 🥺|🙏🥺','Thank you|thank you|thank you thank you|🙏','Blessed|blessed|blessed fr|😇']],
+['shrug','hands','Shrug','Both open palms out wide at chest height','uncertainty signal',['Shrug|shrug|¯\\_(ツ)_/¯|🤷','IDK|i dont know|I don\'t know man|🤷‍♂️','This is fine|this is fine|this is fine.|🔥☕🐶']],
+['up','hands','Hands up','Both hands above your head','celebration signal',['Celebrate|celebrate|WE WON|🎉🙌','Raise the roof|raise the roof|raise the roof|🙌🏠','We\'re so back|we are so back|we\'re so back|📈🙌','Touchdown|touchdown celebration|TOUCHDOWN|🏈🙌']],
+['mouth','combo','Hand over mouth','Cover your mouth with one hand','gasp signal',['Gasp|gasp|*gasp*|😲','OMG|omg|OMG|🫢','Oop|oop|oop—|🫢💅','Screaming|shocked face|I\'m screaming|😱']],
+['facepalm','combo','Facepalm','Hand on your forehead or eyes','regret signal',['Facepalm|facepalm|facepalm|🤦','SMH|smh|smh my head|🤦‍♂️','Why are you like this|why are you like this|why are you like this|😩']],
+['cover','combo','Cover face','Hide your face with both hands','embarrassment signal',['Cringe|cringe|the cringe 😬|😬','Embarrassed|embarrassed|{n} wants to disappear|🙈','I can\'t|i cant|I can\'t. I CAN\'T.|🫣']],
+['mind','combo','Mind blown','Both hands to the sides of your head','revelation signal',['Mind blown|mind blown|mind = blown|🤯','Galaxy brain|galaxy brain|galaxy brain unlocked|🌌🧠','Head explode|head explode|{n}\'s brain rn|💥🧠']],
+['chin','combo','Thinking','Hand on your chin','contemplation signal',['Thinking|thinking hmm|hmmmm|🤔','Calculating|calculating|calculating…|🧠⚙️','Cooking|deep thought|{n} is cooking something|🤔💭']],
+['temple','combo','Think about it','Tap your temple with one finger','genius signal',['Roll Safe|roll safe|can\'t lose if you never play 🧠|🧠☝️','Big brain|big brain|big brain time|🧠','So smart|smart|so smart|🎓']]
+];
+const TRIG=RAW.map(([id,grp,name,how,sig,mm])=>({id,grp,name,how,sig,acc:0,armed:true,next:0,last:null,
+  memes:mm.map(s=>{const [label,q,cap,emo]=s.split('|');return {label,q,cap,emo}})}));
+const T=Object.fromEntries(TRIG.map(t=>[t.id,t]));
+const STATS=['aura: +1000','rizz: detected','main character energy: 97%','NPC behavior: 0%','vibe check: passed','cooked: not yet','W probability: 99.2%','lore: expanding','face card: never declines','plot armor: active','touch grass: recommended','energy: unmatched','threat level: harmless','brainrot: moderate','delulu: within limits','{n}: certified moment','screen time: concerning','sigma index: off the charts'];
+
+/* ---------- DOM ---------- */
+const video=$('#cam'),stage=$('#stage'),ov=$('#ov'),octx=ov.getContext('2d'),rc=$('#rain'),rx=rc.getContext('2d');
+let stream=null,face=null,hands=null,running=false,t0=0,DELEG='-',ar=16/9,chan=0,gnext=0;
+let FX=null,FXt=-1e9,HX=[],HXt=-1e9,LF=null,LFt=-1e9;
+let toastT=0;
+function toast(m,ms=2800){const el=$('#toast');el.textContent=m;el.classList.add('on');clearTimeout(toastT);toastT=setTimeout(()=>el.classList.remove('on'),ms)}
+const toasted={};function toastOnce(m){if(toasted[m])return;toasted[m]=1;toast(m,4200)}
+const status=m=>{$('#status').textContent=m};
+
+/* ---------- geometry ---------- */
+const P=l=>({x:l.x*ar,y:l.y});
+const D=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y);
+const M2=(a,b)=>({x:(a.x+b.x)/2,y:(a.y+b.y)/2});
+function bbox(L){let x0=1e9,y0=1e9,x1=-1e9,y1=-1e9;for(const p of L){if(p.x<x0)x0=p.x;if(p.x>x1)x1=p.x;if(p.y<y0)y0=p.y;if(p.y>y1)y1=p.y}return {x0,y0,x1,y1}}
+function faceFeat(r){
+  const lm=r&&r.faceLandmarks&&r.faceLandmarks[0];if(!lm)return null;
+  const L=lm.map(P),bs={};
+  const cats=(r.faceBlendshapes&&r.faceBlendshapes[0]&&r.faceBlendshapes[0].categories)||[];
+  for(const c of cats)bs[c.categoryName]=c.score;
+  const g=k=>bs[k]||0,av=(a,b)=>(g(a)+g(b))/2;
+  const box=bbox(L),eL=L[33],eR=L[263],nose=L[1],ed=D(eL,eR)||.01,em=M2(eL,eR);
+  return {L,bs,g,av,box,U:D(L[234],L[454])||ed*2.2,cx:(box.x0+box.x1)/2,cy:(box.y0+box.y1)/2,
+    yaw:(nose.x-em.x)/ed,pitch:(nose.y-em.y)/ed,roll:Math.atan2(eR.y-eL.y,eR.x-eL.x)*57.3,
+    nose,mouth:M2(L[13],L[14]),chin:L[152],fore:L[10],brow:L[168],tL:L[21],tR:L[251],
+    smile:av('mouthSmileLeft','mouthSmileRight'),jaw:g('jawOpen')};
+}
+const TIPS=[4,8,12,16,20],PIPS=[3,6,10,14,18],hh={};
+function handFeat(r,now){
+  const out=[],lms=(r&&r.landmarks)||[],hd=(r&&(r.handedness||r.handednesses))||[],used={};
+  lms.forEach((lm,i)=>{
+    const Q=lm.map(P);let side=(hd[i]&&hd[i][0]&&hd[i][0].categoryName)||'H';if(used[side])side+='2';used[side]=1;
+    const size=D(Q[0],Q[9])||.01;
+    const palm={x:(Q[0].x+Q[5].x+Q[9].x+Q[17].x)/4,y:(Q[0].y+Q[5].y+Q[9].y+Q[17].y)/4};
+    const ext=[1,2,3,4].map(f=>D(Q[0],Q[TIPS[f]])>D(Q[0],Q[PIPS[f]])*1.12);
+    const thumbOut=D(Q[2],Q[4])>.85*(D(Q[2],Q[3])+D(Q[3],Q[4]))&&D(Q[4],Q[6])>size*.36&&D(Q[4],Q[10])>size*.36&&D(Q[4],Q[9])>size*.4;
+    const n=ext.filter(Boolean).length,[ix,md,rg,pk]=ext;
+    const tdy=(Q[4].y-Q[2].y)/size,tdx=(Q[4].x-Q[2].x)/size;
+    let gest='none';
+    if(D(Q[4],Q[8])<size*.32&&md&&rg&&pk)gest='ok';
+    else if(ix&&!md&&!rg&&pk)gest='rock';
+    else if(!ix&&!md&&!rg&&pk&&thumbOut)gest='shaka';
+    else if(ix&&md&&!rg&&!pk)gest='peace';
+    else if(ix&&!md&&!rg&&!pk){const vx=Q[8].x-Q[5].x,vy=Q[8].y-Q[5].y;if(thumbOut&&Math.abs(vx)>Math.abs(vy)*1.1)gest='gun';else if(vy<-size*.5)gest='point'}
+    else if(n===0&&thumbOut&&tdy<-.45&&Math.abs(tdx)<Math.abs(tdy))gest='tup';
+    else if(n===0&&thumbOut&&tdy>.45&&Math.abs(tdx)<Math.abs(tdy))gest='tdown';
+    else if(n===0)gest='fist';
+    else if(n===4&&thumbOut)gest='open';
+    else if(n>=3)gest='open4';
+    const h=hh[side]||(hh[side]={rel:null,t:now,energy:0,speed:0,xs:[],px:palm.x,py:palm.y});
+    const rel=TIPS.map(k=>({x:(Q[k].x-Q[0].x)/size,y:(Q[k].y-Q[0].y)/size}));
+    const dt=Math.max(1,now-h.t)/1000;
+    if(h.rel&&dt<.3){let s=0;for(let k=0;k<5;k++)s+=Math.hypot(rel[k].x-h.rel[k].x,rel[k].y-h.rel[k].y);
+      const a=1-Math.exp(-dt/.25);h.energy+=(s/dt-h.energy)*a;h.speed+=(Math.hypot(palm.x-h.px,palm.y-h.py)/dt-h.speed)*a}
+    else{h.energy=0;h.speed=0;h.xs=[]}
+    h.rel=rel;h.t=now;h.px=palm.x;h.py=palm.y;
+    h.xs.push({t:now,v:palm.x,open:n>=3});while(h.xs.length&&now-h.xs[0].t>1500)h.xs.shift();
+    out.push({side,P:Q,size,palm,ext,thumbOut,n,gest,h});
+  });
+  return out;
+}
+
+/* ---------- trigger engine ---------- */
+const E={blinks:[],closed:false,yawH:[],pitH:[],clapOpen:false,claps:[],lastFace:0,lastSeen:0,hadFace:false,goneFired:false,calm:0,ev:{}};
+function pushH(h,t,v){h.push({t,v});while(h.length&&t-h[0].t>1500)h.shift()}
+function rangeH(h){if(!h.length)return 0;let a=1e9,b=-1e9;for(const o of h){if(o.v<a)a=o.v;if(o.v>b)b=o.v}return b-a}
+function osc(h,amp){if(h.length<6)return 0;const m=h.reduce((s,o)=>s+o.v,0)/h.length;let last=0,c=0;for(const o of h){const d=o.v-m,s=d>amp?1:d<-amp?-1:0;if(s&&s!==last){if(last)c++;last=s}}return c}
+const two=C=>C.hs.length===2;
+const lookSide=f=>Math.max(f.av('eyeLookOutLeft','eyeLookInRight'),f.av('eyeLookInLeft','eyeLookOutRight'));
+const FF=C=>C.f&&!C.near;
+const hasG=(C,g)=>C.hs.some(H=>H.gest===g);
+const DET={
+  gone:{p:99,h:0,f:()=>E.ev.gone},
+  /* hand+face combos use C.z: the live face, or the last one seen in the past 1.5 s (hands often hide the face) */
+  cover:{p:100,h:350,f:C=>C.z&&two(C)&&C.hs.every(H=>Math.abs(H.palm.x-C.z.cx)<.55*C.z.U&&H.palm.y>C.z.box.y0-.15*C.z.U&&H.palm.y<C.z.box.y1+.1*C.z.U)},
+  up:{p:98,h:350,f:C=>two(C)&&(C.z?C.hs.every(H=>H.palm.y<C.z.fore.y-.35*C.z.U):C.hs.every(H=>H.palm.y<.2))},
+  mind:{p:96,h:300,f:C=>C.z&&two(C)&&C.hs.every(H=>H.palm.y<C.z.nose.y+.1*C.z.U&&H.palm.y>C.z.fore.y-.6*C.z.U&&Math.abs(H.palm.x-C.z.cx)>.38*C.z.U&&Math.abs(H.palm.x-C.z.cx)<1.3*C.z.U)&&(C.hs[0].palm.x-C.z.cx)*(C.hs[1].palm.x-C.z.cx)<0},
+  heart:{p:94,h:450,f:C=>two(C)&&D(C.hs[0].P[4],C.hs[1].P[4])<.3*C.U&&D(C.hs[0].P[8],C.hs[1].P[8])<.3*C.U&&C.hs[0].P[8].y<C.hs[0].P[4].y},
+  clap:{p:92,h:0,f:()=>E.ev.clap},
+  prayer:{p:90,h:650,f:C=>{if(!two(C)||D(C.hs[0].palm,C.hs[1].palm)>=.55*C.U)return false;const m=M2(C.hs[0].palm,C.hs[1].palm);return !C.z||(m.y>C.z.mouth.y&&Math.abs(m.x-C.z.cx)<.9*C.z.U)}},
+  shrug:{p:88,h:500,f:C=>two(C)&&C.hs.every(H=>H.n>=3)&&Math.abs(C.hs[0].palm.x-C.hs[1].palm.x)>1.7*C.U&&(!C.z||C.hs.every(H=>H.palm.y>C.z.chin.y-.1*C.z.U))},
+  mouth:{p:86,h:300,f:C=>C.z&&C.hs.some(H=>(D(H.palm,C.z.mouth)<.42*C.z.U||H.P.slice(5).some(q=>D(q,C.z.mouth)<.2*C.z.U))&&H.palm.y>C.z.nose.y-.15*C.z.U)},
+  facepalm:{p:84,h:350,f:C=>C.z&&C.hs.some(H=>D(H.palm,C.z.brow)<.5*C.z.U||D(H.palm,C.z.fore)<.45*C.z.U)},
+  temple:{p:82,h:400,f:C=>C.z&&C.hs.some(H=>H.ext[0]&&(D(H.P[8],C.z.tL)<.3*C.z.U||D(H.P[8],C.z.tR)<.3*C.z.U))},
+  chin:{p:80,h:600,f:C=>C.z&&C.hs.some(H=>[4,6,7,8].some(k=>D(H.P[k],C.z.chin)<.3*C.z.U)&&H.palm.y>C.z.mouth.y)},
+  wave:{p:78,h:0,f:()=>E.ev.wave},
+  skill:{p:76,h:350,f:C=>C.hs.some(H=>H.h.energy>C.th(9)&&H.h.speed<3.5*C.U)},
+  tup:{p:70,h:350,f:C=>hasG(C,'tup')},
+  tdown:{p:70,h:350,f:C=>hasG(C,'tdown')},
+  rock:{p:69,h:400,f:C=>hasG(C,'rock')},
+  shaka:{p:69,h:400,f:C=>hasG(C,'shaka')},
+  gun:{p:68,h:400,f:C=>hasG(C,'gun')},
+  ok:{p:68,h:450,f:C=>hasG(C,'ok')},
+  peace:{p:67,h:400,f:C=>hasG(C,'peace')},
+  point:{p:66,h:450,f:C=>hasG(C,'point')},
+  fist:{p:62,h:700,f:C=>!C.near&&C.hs.some(H=>H.gest==='fist'&&H.h.speed<2*C.U)},
+  palm:{p:60,h:800,f:C=>!C.near&&C.hs.length===1&&C.hs[0].gest==='open'&&C.hs[0].h.speed<.8*C.U},
+  shake:{p:58,h:0,f:()=>E.ev.shake},
+  nod:{p:57,h:0,f:()=>E.ev.nod},
+  blink:{p:55,h:0,f:()=>E.ev.blink},
+  shock:{p:52,h:250,f:C=>FF(C)&&C.f.jaw>C.th(.5)&&(C.f.av('eyeWideLeft','eyeWideRight')>C.th(.18)||C.f.g('browInnerUp')>C.th(.4))&&C.f.smile<.35},
+  laugh:{p:50,h:350,f:C=>FF(C)&&C.f.smile>C.th(.5)&&C.f.jaw>C.th(.28)},
+  angry:{p:47,h:500,f:C=>FF(C)&&C.f.av('browDownLeft','browDownRight')>C.th(.45)&&C.f.smile<.2&&C.f.jaw<.4},
+  brows:{p:47,h:450,f:C=>FF(C)&&C.f.av('browOuterUpLeft','browOuterUpRight')>C.th(.5)&&C.f.g('browInnerUp')>C.th(.4)&&C.f.jaw<.25&&C.f.smile<.4},
+  sus:{p:46,h:450,f:C=>FF(C)&&(Math.abs(C.f.g('browOuterUpLeft')-C.f.g('browOuterUpRight'))>C.th(.32)||Math.abs(C.f.g('browDownLeft')-C.f.g('browDownRight'))>C.th(.38))&&C.f.jaw<.3},
+  sad:{p:45,h:600,f:C=>{if(!FF(C)||C.f.smile>.12)return false;const fr=C.f.av('mouthFrownLeft','mouthFrownRight');return fr>C.th(.32)||(fr>C.th(.15)&&C.f.g('browInnerUp')>C.th(.45))}},
+  pout:{p:44,h:400,f:C=>FF(C)&&C.f.g('mouthPucker')>C.th(.82)&&C.f.jaw<.2&&C.f.smile<.2},
+  puff:{p:44,h:500,f:C=>FF(C)&&C.f.g('cheekPuff')>C.th(.3)},
+  side:{p:43,h:500,f:C=>FF(C)&&Math.abs(C.f.yaw)<.25&&lookSide(C.f)>C.th(.6)},
+  smirk:{p:42,h:500,f:C=>FF(C)&&Math.abs(C.f.g('mouthSmileLeft')-C.f.g('mouthSmileRight'))>C.th(.3)&&Math.max(C.f.g('mouthSmileLeft'),C.f.g('mouthSmileRight'))>C.th(.4)},
+  squint:{p:41,h:600,f:C=>FF(C)&&C.f.av('eyeSquintLeft','eyeSquintRight')>C.th(.55)&&C.f.smile<.25&&C.f.av('eyeBlinkLeft','eyeBlinkRight')<.5},
+  smile:{p:40,h:600,f:C=>FF(C)&&C.f.smile>C.th(.65)&&C.f.jaw<.22},
+  tilt:{p:39,h:700,f:C=>C.f&&Math.abs(C.f.roll)>C.th(17)},
+  away:{p:38,h:1000,f:C=>C.f&&Math.abs(C.f.yaw)>C.th(.45)},
+  deadpan:{p:10,h:0,f:()=>E.calm>5000}
+};
+for(const t of TRIG)t.d=DET[t.id];
+
+function buildCtx(now,dt){
+  const f=now-FXt<350?FX:null,hs=now-HXt<350?HX:[],z=f||(now-LFt<1500?LF:null);
+  const U=z?z.U:(hs.length?hs[0].size*2.4:.2),th=v=>v/S.sens;
+  if(f||hs.length)E.lastSeen=now;
+  const near=!!z&&hs.some(H=>H.palm.x>z.box.x0-.25*z.U&&H.palm.x<z.box.x1+.25*z.U&&H.palm.y>z.box.y0-.3*z.U&&H.palm.y<z.box.y1+.2*z.U);
+  E.ev={};
+  if(f){
+    E.lastFace=now;E.hadFace=true;E.goneFired=false;
+    const cl=f.av('eyeBlinkLeft','eyeBlinkRight')>.5;if(E.closed&&!cl)E.blinks.push(now);E.closed=cl;
+    E.blinks=E.blinks.filter(t=>now-t<1700);if(E.blinks.length>=3){E.ev.blink=1;E.blinks=[]}
+    pushH(E.yawH,now,f.yaw);pushH(E.pitH,now,f.pitch);
+    const yr=rangeH(E.yawH),pr=rangeH(E.pitH);
+    if(osc(E.yawH,th(.09))>=3&&yr>pr*1.3){E.ev.shake=1;E.yawH=[];E.pitH=[]}
+    else if(osc(E.pitH,th(.045))>=2&&pr>yr*.8){E.ev.nod=1;E.yawH=[];E.pitH=[]}
+    const calmNow=!hs.length&&f.smile<.25&&f.jaw<.15&&f.g('browInnerUp')<.35&&f.av('browDownLeft','browDownRight')<.35&&Math.abs(f.yaw)<.25&&yr<.1;
+    E.calm=calmNow?E.calm+dt:0;
+  }else{E.calm=0;if(E.hadFace&&!E.goneFired&&now-E.lastSeen>2500){E.ev.gone=1;E.goneFired=true}}
+  for(const H of hs){const xs=H.h.xs.filter(o=>o.open);if(xs.length>=8&&osc(xs,th(.2)*U)>=3){E.ev.wave=1;H.h.xs=[]}}
+  if(two({hs})){const d=D(hs[0].palm,hs[1].palm)/U;if(d>.95)E.clapOpen=true;else if(d<.5&&E.clapOpen){E.clapOpen=false;E.claps.push(now)}}
+  E.claps=E.claps.filter(t=>now-t<1800);if(E.claps.length>=2){E.ev.clap=1;E.claps=[]}
+  return {f,z,hs,U,th,near,now};
+}
+function step(now,dt){
+  const C=buildCtx(now,dt);let best=null,cand=null,cr=0;
+  for(const t of TRIG){
+    let on=false;try{on=!!t.d.f(C)}catch(e){on=false}
+    if(on)t.acc+=dt;else{t.acc=0;t.armed=true}
+    if(on&&t.armed&&now>=t.next){const r=t.d.h?t.acc/t.d.h:1;
+      if(r>=1){if(!best||t.d.p>best.d.p)best=t}else if(r>cr){cr=r;cand=t}}
+  }
+  const rd=$('#reading');
+  if(cand&&cr>.25&&cand.d.h>=300){rd.classList.add('on');$('#rdName').textContent=cand.name;$('#rdBar').style.width=Math.min(100,cr*100)+'%'}else rd.classList.remove('on');
+  if(best&&now>=gnext){
+    best.armed=false;best.next=now+Math.max(4000,S.cool*1500);gnext=now+S.cool*1000;
+    for(const t of TRIG)t.acc=0;
+    fireT(best,'auto');
+  }
+}
+
+/* ---------- GIPHY ---------- */
+let gcache=store.get('gcache',{}),gcalls=store.get('gcalls',[]);
+const callsHour=()=>{const n=Date.now();gcalls=gcalls.filter(t=>n-t<36e5);return gcalls.length};
+const gerr=(m,code)=>Object.assign(new Error(m),{code});
+async function giphy(q,nocache){
+  const k=S.rating+'|'+q,c=gcache[k];
+  if(!nocache&&c&&Date.now()-c.t<864e5&&c.items.length)return c.items;
+  if(callsHour()>=98)throw gerr('Hourly GIPHY limit reached: showing cards for now','limit');
+  gcalls.push(Date.now());store.set('gcalls',gcalls);
+  let r;
+  try{r=await fetch(`https://api.giphy.com/v1/gifs/search?api_key=${encodeURIComponent(S.key.trim())}&q=${encodeURIComponent(q)}&limit=12&rating=${S.rating}&lang=en`)}
+  catch(e){throw gerr('Could not reach GIPHY: showing cards instead','net')}
+  if(r.status===401||r.status===403)throw gerr('GIPHY rejected the key: check it in Settings','key');
+  if(r.status===429)throw gerr('GIPHY rate limit hit: showing cards for now','limit');
+  if(!r.ok)throw gerr('GIPHY error '+r.status,'http');
+  const j=await r.json();
+  const items=(j.data||[]).map(d=>{const im=d.images||{},fh=im.fixed_height||{},ds=im.downsized_small||{},dn=im.downsized||{};
+    return {id:d.id,mp4:ds.mp4||fh.mp4||'',gif:fh.url||dn.url||''}}).filter(x=>x.mp4||x.gif);
+  return cachePut(k,items);
+}
+function cachePut(k,items){
+  gcache[k]={t:Date.now(),items};const ks=Object.keys(gcache);if(ks.length>300)delete gcache[ks[0]];
+  store.set('gcache',gcache);updUsage();return items;
+}
+const BANKS={giphy:{fn:giphy,label:'POWERED BY GIPHY'}};
+const banks=()=>[S.key.trim()&&'giphy'].filter(Boolean);
+async function fetchGif(m){
+  let order=banks();if(order.length>1&&Math.random()<.5)order.reverse();
+  let err=null;
+  for(const b of order){
+    try{const items=await BANKS[b].fn(m.q);if(!items.length)throw gerr('No GIF found for "'+m.q+'"','empty');return {g:pickGif(m,items,b),src:BANKS[b].label}}
+    catch(e){err=e}
+  }
+  throw err;
+}
+const recent=[];
+function pickGif(m,items,b){
+  const u='used_'+b;let g;if(!m[u]){m[u]=1;g=items[0]}
+  else{const c=items.slice(0,6).filter(x=>!recent.includes(x.id));g=pick(c.length?c:items)}
+  recent.push(g.id);if(recent.length>30)recent.shift();return g;
+}
+function vid(src){const v=document.createElement('video');v.setAttribute('playsinline','');v.setAttribute('muted','');Object.assign(v,{src,autoplay:true,muted:true,loop:true,playsInline:true});return v}
+function gifEl(g){
+  if(g.mp4){const v=vid(g.mp4);v.onerror=()=>{if(g.gif){const i=new Image();i.alt='';i.src=g.gif;v.replaceWith(i)}};return v}
+  const i=new Image();i.alt='';i.src=g.gif;return i;
+}
+function cardEl(m,t){
+  const d=document.createElement('div');d.className='card';
+  d.innerHTML=`<div class="e">${esc(m.emo)}</div><div class="n">${esc(m.label)}</div><div class="h">${banks().length?'offline card':'built-in card · add a GIPHY key for the real GIF'}</div>`;return d;
+}
+
+/* ---------- your clips (IndexedDB) ---------- */
+const IDB={db:null,
+  open(){return new Promise((res,rej)=>{if(!window.indexedDB)return rej('no idb');const r=indexedDB.open('seen-clips',1);
+    r.onupgradeneeded=()=>r.result.createObjectStore('clips',{keyPath:'id',autoIncrement:true});r.onsuccess=()=>{IDB.db=r.result;res()};r.onerror=()=>rej(r.error)})},
+  req(mode,fn){return new Promise((res,rej)=>{const q=fn(IDB.db.transaction('clips',mode).objectStore('clips'));q.onsuccess=()=>res(q.result);q.onerror=()=>rej(q.error)})}};
+const clips={};
+async function loadClips(){
+  try{if(!IDB.db)await IDB.open();const all=await IDB.req('readonly',s=>s.getAll());
+    for(const k of Object.keys(clips)){clips[k].forEach(c=>URL.revokeObjectURL(c.url));delete clips[k]}
+    for(const o of all)(clips[o.trig]||(clips[o.trig]=[])).push({id:o.id,name:o.name,type:o.type,url:URL.createObjectURL(o.blob)});
+  }catch(e){console.warn('clips',e)}
+}
+function clipEl(c){
+  if((c.type||'').startsWith('video'))return vid(c.url);
+  const i=new Image();i.alt='';i.src=c.url;return i;
+}
+
+/* ---------- windows ---------- */
+const wins=[];
+function overlap(a,b){const w=Math.min(a.x+a.w,b.x+b.w)-Math.max(a.x,b.x),h=Math.min(a.y+a.h,b.y+b.h)-Math.max(a.y,b.y);return w>0&&h>0?w*h:0}
+function placeM(el){
+  /* phone: full-width cards stacked in the top or bottom band, whichever hides less of your face */
+  const W=stage.clientWidth,H=stage.clientHeight,ww=el.offsetWidth,wh=Math.min(H*.5,105+Math.min(H*.22,ww*.75)),fr=faceRect();
+  const x=Math.max(6,(W-ww)/2+rnd(-10,10)),tops=[Math.round(H*.08)+rnd(0,8),Math.max(40,H-wh-90-rnd(0,8))];let best=null;
+  for(const y of tops){const r={x,y,w:ww,h:wh};let c=fr?overlap(r,fr):0;for(const o of wins)c+=overlap(r,{x:o.el.offsetLeft,y:o.el.offsetTop,w:o.el.offsetWidth,h:o.el.offsetHeight})*4;if(!best||c<best[0])best=[c,y]}
+  el.style.left=x+'px';el.style.top=best[1]+'px';
+}
+function place(el){
+  if(MOBILE)return placeM(el);
+  const W=stage.clientWidth,H=stage.clientHeight,ww=el.offsetWidth,wh=Math.min(H*.78,ww*1.2),fr=faceRect();let best=null;
+  for(let i=0;i<16;i++){const x=rnd(8,Math.max(8,W-ww-8)),y=rnd(46,Math.max(46,H-wh-56)),r={x,y,w:ww,h:wh};
+    let c=fr?overlap(r,fr)*3:0;for(const o of wins)c+=overlap(r,{x:o.el.offsetLeft,y:o.el.offsetTop,w:o.el.offsetWidth,h:o.el.offsetHeight});
+    if(!best||c<best[0])best=[c,x,y]}
+  el.style.left=best[1]+'px';el.style.top=best[2]+'px';
+}
+function drag(el,bar){
+  let sx,sy,ox,oy,on=false;
+  bar.addEventListener('pointerdown',e=>{if(e.target.closest('.wx'))return;on=true;sx=e.clientX;sy=e.clientY;ox=el.offsetLeft;oy=el.offsetTop;bar.setPointerCapture(e.pointerId);el.style.zIndex=++zTop});
+  bar.addEventListener('pointermove',e=>{if(!on)return;el.style.left=ox+e.clientX-sx+'px';el.style.top=oy+e.clientY-sy+'px'});
+  bar.addEventListener('pointerup',()=>{on=false});
+}
+let zTop=1;
+function openWin(title,sig){
+  while(wins.length>=S.maxWin)wins[0].close();
+  chan++;const ch=String(chan%100).padStart(2,'0');
+  const el=document.createElement('div');el.className='win';el.style.zIndex=++zTop;
+  el.innerHTML=`<div class="wbar"><span class="dia"></span><span>${esc(title)}</span><span class="st">UPLINK PENDING</span><button class="wx" aria-label="Close window">×</button></div><div class="wbody"><div class="conn"><div class="spin"></div><h4>Establishing a connection</h4><small>${esc(sig)} / ${ch}</small><div class="prog"><s></s></div></div></div><div class="wfoot"><span>CH / ${ch}</span><span class="src"></span></div>`;
+  $('#wins').appendChild(el);place(el);
+  requestAnimationFrame(()=>requestAnimationFrame(()=>{const s=el.querySelector('.prog s');if(s)s.style.width='92%'}));
+  const w={el,closed:false,timer:0,onclose:null,
+    close(){if(w.closed)return;w.closed=true;clearTimeout(w.timer);const i=wins.indexOf(w);if(i>=0)wins.splice(i,1);el.classList.add('out');setTimeout(()=>{el.remove();w.onclose&&w.onclose()},260)},
+    show(cap,media,src){if(w.closed)return;el.classList.add('live');el.querySelector('.st').textContent='LIVE SIGNAL';
+      const b=el.querySelector('.wbody');b.innerHTML='';
+      if(cap){const c=document.createElement('div');c.className='cap';c.textContent=cap;b.appendChild(c)}
+      const md=document.createElement('div');md.className='media';md.appendChild(media);b.appendChild(md);
+      el.querySelector('.src').textContent=src||'';w.arm()},
+    arm(ms){clearTimeout(w.timer);w.timer=setTimeout(w.close,ms||S.life*1000)}};
+  el.querySelector('.wx').onclick=w.close;
+  if(MOBILE)el.querySelector('.wbody').addEventListener('click',()=>{if(el.classList.contains('live'))w.close()});
+  else{el.addEventListener('pointerenter',()=>clearTimeout(w.timer));
+    el.addEventListener('pointerleave',()=>{if(el.classList.contains('live'))w.arm(2500)})}
+  drag(el,el.querySelector('.wbar'));
+  wins.push(w);return w;
+}
+
+/* ---------- firing ---------- */
+const logEl=$('#log');
+function addLog(t){
+  const d=document.createElement('div'),s=(performance.now()-t0)/1000;
+  d.innerHTML=`${String(Math.floor(s/60)).padStart(2,'0')}:${String(Math.floor(s%60)).padStart(2,'0')} <em>${esc(t.name.toUpperCase())}</em> → <span>…</span>`;
+  logEl.appendChild(d);while(logEl.children.length>6)logEl.firstChild.remove();return d.querySelector('span');
+}
+async function fireT(t){
+  const ls=addLog(t);
+  if(MOBILE&&navigator.vibrate){try{navigator.vibrate(20)}catch(e){}}
+  const cl=clips[t.id]||[];let mine=null,m=null;
+  if(cl.length&&Math.random()<.5)mine=pick(cl);
+  else{const ms=t.memes.filter(x=>x!==t.last);m=pick(ms.length?ms:t.memes);t.last=m}
+  const w=openWin(mine?'PERSONAL ARCHIVE':'REACTION MATCH',t.sig);
+  const wait=sleep(rnd(650,1300));
+  let cap,el,src,label;
+  if(mine){cap=`${nm()} — ${t.name.toLowerCase()}`;el=clipEl(mine);src='YOUR CLIP';label=mine.name}
+  else{cap=fill(m.cap);label=m.label;
+    if(banks().length){try{const r=await fetchGif(m);el=gifEl(r.g);src=r.src}
+      catch(e){toastOnce(e.message);el=cardEl(m,t);src='OFFLINE CARD'}}
+    else{el=cardEl(m,t);src='BUILT-IN CARD'}}
+  await wait;
+  w.show(cap,el,src);ls.textContent=label;
+  const A=archives[t.id];
+  if(S.archive&&A&&Date.now()-A.t>15000&&Math.random()<.45)setTimeout(()=>archiveWin(t,A),700);
+  else if(S.analysis&&running&&video.readyState>=2&&Math.random()<(t.id==='deadpan'?.7:.12))analysisWin(t);
+  if(S.archive&&running&&!A)captureArchive(t);
+}
+function randomFire(){fireT(pick(TRIG))}
+
+/* ---------- archive: a rolling 3 s buffer of you ---------- */
+/* 24 small canvases reused in a circle (8 fps): works in Chrome and Safari */
+const RN=24,ring=[],archives={},pend={};let ringI=0,lastGrab=0;const AW=MOBILE?180:240;
+function grab(now){
+  if(!S.archive||now-lastGrab<125||video.readyState<2)return;lastGrab=now;
+  const h=Math.max(2,Math.round(AW/ar));let c=ring[ringI%RN];
+  if(!c){c=document.createElement('canvas');ring[ringI%RN]=c}
+  if(c.width!==AW||c.height!==h){c.width=AW;c.height=h}
+  try{c.getContext('2d').drawImage(video,0,0,AW,h);ringI++}catch(e){}
+}
+function captureArchive(t){
+  if(archives[t.id]||pend[t.id])return;pend[t.id]=1;
+  setTimeout(async()=>{
+    try{const n=Math.min(ringI,RN),fr=[];for(let k=n;k>0;k--)fr.push(ring[(ringI-k)%RN]);
+      if(fr.length<6)return;
+      const blobs=await Promise.all(fr.map(c=>new Promise(r=>c.toBlob(r,'image/jpeg',.72))));
+      archives[t.id]={blobs:blobs.filter(Boolean),t:Date.now(),w:fr[0].width,h:fr[0].height};
+    }catch(e){console.warn('archive',e)}finally{delete pend[t.id]}
+  },1000);
+}
+const ago=ms=>{const s=Math.round(ms/1000);return s<60?s+'s':Math.round(s/60)+' min'};
+async function archiveWin(t,A){
+  const w=openWin('ARCHIVE MATCH','memory recall');
+  const urls=A.blobs.map(b=>URL.createObjectURL(b)),bm=urls.map(u=>{const i=new Image();i.src=u;return i});
+  await Promise.all([Promise.all(bm.map(i=>i.decode?i.decode().catch(()=>{}):0)),sleep(rnd(700,1100))]);
+  if(w.closed){urls.forEach(u=>URL.revokeObjectURL(u));return}
+  const cv=document.createElement('canvas');cv.width=A.w;cv.height=A.h;if(mir())cv.classList.add('flip');
+  const x=cv.getContext('2d');let i=0;try{x.drawImage(bm[0],0,0)}catch(e){}
+  const iv=setInterval(()=>{try{x.drawImage(bm[i++%bm.length],0,0)}catch(e){}},125);
+  w.onclose=()=>{clearInterval(iv);urls.forEach(u=>URL.revokeObjectURL(u))};
+  w.show(`${nm()} pre ${t.name.toLowerCase()} · ${ago(Date.now()-A.t)} ago`,cv,'YOUR ARCHIVE');w.arm(S.life*1000+1500);
+}
+
+/* ---------- analysis: freeze-frame scan ---------- */
+const handish=t=>['hands','combo'].includes(t.grp)||['wave','clap','skill'].includes(t.id);
+async function analysisWin(t){
+  const cw=MOBILE?360:480,chh=Math.round(cw/ar),cv=document.createElement('canvas');cv.width=cw;cv.height=chh;const x=cv.getContext('2d');
+  x.save();if(mir()){x.translate(cw,0);x.scale(-1,1)}x.drawImage(video,0,0,cw,chh);x.restore();
+  const hs=performance.now()-HXt<400?HX:[],f=performance.now()-FXt<400?FX:null;
+  const box=handish(t)&&hs.length?bbox(hs[0].P):f?f.box:null;
+  const w=openWin('ANALYSIS','unknown origin');await sleep(rnd(800,1200));if(w.closed)return;
+  if(box){
+    const X=v=>(mir()?1-v/ar:v/ar)*cw,Y=v=>v*chh;
+    const cx=(X(box.x0)+X(box.x1))/2,cy=(Y(box.y0)+Y(box.y1))/2,rx=Math.abs(X(box.x1)-X(box.x0))*.68+12,ry=Math.abs(Y(box.y1)-Y(box.y0))*.66+12;
+    x.strokeStyle='#ff3b30';x.lineCap='round';
+    for(let k=0;k<2;k++){x.lineWidth=4-k*1.5;x.beginPath();x.ellipse(cx+k*3,cy-k*2,rx+k*4,ry-k*3,-.08+k*.05,0,Math.PI*2);x.stroke()}
+    const ax=Math.max(20,cx-rx*1.5),ay=Math.min(chh-20,cy+ry*1.25),bx=cx-rx*.8,by=cy+ry*.75;
+    x.lineWidth=4;x.beginPath();x.moveTo(ax,ay);x.quadraticCurveTo((ax+bx)/2,ay+12,bx,by);x.stroke();
+    const an=Math.atan2(by-(ay+12),bx-(ax+bx)/2);x.beginPath();x.moveTo(bx,by);x.lineTo(bx-14*Math.cos(an-.5),by-14*Math.sin(an-.5));x.moveTo(bx,by);x.lineTo(bx-14*Math.cos(an+.5),by-14*Math.sin(an+.5));x.stroke();
+  }
+  x.font='700 30px "JetBrains Mono",monospace';x.fillStyle='rgba(255,255,255,.9)';x.textAlign='right';x.fillText('SUBJECT 001',cw-14,chh-16);
+  const wrap=document.createElement('div');wrap.style.position='relative';wrap.style.width='100%';wrap.appendChild(cv);
+  const ul=document.createElement('div');ul.className='anal';
+  ul.innerHTML=[...STATS].sort(()=>Math.random()-.5).slice(0,3).map(s=>`<span>${esc(fill(s))}</span>`).join('');wrap.appendChild(ul);
+  w.show('',wrap,'FRAME CAPTURE');
+}
+
+/* ---------- overlay ---------- */
+let dpr=1;
+function toScreen(X,Y){
+  const vw=video.videoWidth||16,vh=video.videoHeight||9,cw=ov.clientWidth,ch=ov.clientHeight,s=Math.max(cw/vw,ch/vh),dw=vw*s,dh=vh*s;
+  const nx=X/ar;return {x:(cw-dw)/2+(mir()?1-nx:nx)*dw,y:(ch-dh)/2+Y*dh};
+}
+function rectOf(b,pad=0){const a=toScreen(b.x0,b.y0),c=toScreen(b.x1,b.y1);return {x:Math.min(a.x,c.x)-pad,y:a.y-pad,w:Math.abs(c.x-a.x)+pad*2,h:c.y-a.y+pad*2}}
+function faceRect(){const f=performance.now()-FXt<400?FX:null;return f?rectOf(f.box,20):null}
+function brackets(r,len,label){
+  const {x,y,w,h}=r;octx.beginPath();
+  [[x,y,1,1],[x+w,y,-1,1],[x,y+h,1,-1],[x+w,y+h,-1,-1]].forEach(([px,py,sx,sy])=>{octx.moveTo(px,py+sy*len);octx.lineTo(px,py);octx.lineTo(px+sx*len,py)});
+  octx.stroke();if(label){octx.fillText(label,x,y-8)}
+}
+function drawOv(now){
+  dpr=window.devicePixelRatio||1;const W=ov.clientWidth,H=ov.clientHeight;
+  if(ov.width!==Math.round(W*dpr)||ov.height!==Math.round(H*dpr)){ov.width=Math.round(W*dpr);ov.height=Math.round(H*dpr)}
+  octx.setTransform(dpr,0,0,dpr,0,0);octx.clearRect(0,0,W,H);
+  if(!running||video.readyState<2)return;
+  octx.strokeStyle='rgba(170,245,255,.9)';octx.fillStyle='rgba(200,250,255,.9)';octx.lineWidth=1.5;octx.font='500 10px "JetBrains Mono",monospace';
+  const f=now-FXt<350?FX:null,hs=now-HXt<350?HX:[];
+  if(f)brackets(rectOf(f.box,16),18,'SUBJECT LOCKED');
+  for(const H of hs){const g=H.gest!=='none'&&H.gest!=='open4'?H.gest.toUpperCase():'';brackets(rectOf(bbox(H.P),8),10,g)}
+  if(S.debug){octx.fillStyle='rgba(143,240,255,.7)';
+    if(f)for(let i=0;i<f.L.length;i+=3){const p=toScreen(f.L[i].x,f.L[i].y);octx.fillRect(p.x-1,p.y-1,2,2)}
+    for(const H of hs)for(const q of H.P){const p=toScreen(q.x,q.y);octx.fillRect(p.x-2,p.y-2,4,4)}}
+}
+
+/* ---------- digital rain ---------- */
+const GLY='アイウエオカキクケコサシスセソタチツテトナニヌネノハヒフヘホマミムメモヤユヨラリルレロワン0123456789Z:+=<>'.split('');let drops=[],lastRain=0;
+function sizeRain(){const r=devicePixelRatio||1;rc.width=Math.max(1,rc.clientWidth*r);rc.height=Math.max(1,rc.clientHeight*r);const fs=15*r;drops=Array.from({length:Math.ceil(rc.width/fs)},()=>Math.random()*-30)}
+function rain(now){
+  if(!S.rain||now-lastRain<60)return;lastRain=now;const fs=15*(devicePixelRatio||1);
+  rx.fillStyle='rgba(0,0,0,.13)';rx.fillRect(0,0,rc.width,rc.height);rx.font=`700 ${fs}px monospace`;
+  for(let i=0;i<drops.length;i++){const y=drops[i]*fs;if(y>0){rx.fillStyle=Math.random()<.07?'#e6ffe9':'#25f26a';rx.fillText(pick(GLY),i*fs,y)}
+    drops[i]+=Math.random()<.85?1:0;if(y>rc.height&&Math.random()>.96)drops[i]=Math.random()*-25}
+}
+
+/* ---------- main loop ---------- */
+let lastVT=-1,frameN=0,procE=12,alt=false,lastStep=performance.now(),fpsE=0,lastFr=0,lastDbg=0;
+function loop(){
+  requestAnimationFrame(loop);const now=performance.now();
+  rain(now);
+  if(running&&video.readyState>=2){
+    ar=(video.videoWidth/video.videoHeight)||ar;
+    if(video.currentTime!==lastVT&&(face||hands)){
+      lastVT=video.currentTime;frameN++;const t1=performance.now();
+      if(face&&(!alt||frameN%2===0)){try{FX=faceFeat(face.detectForVideo(video,now));FXt=now;if(FX){LF=FX;LFt=now}}catch(e){console.warn(e)}}
+      if(hands&&S.hands&&(!alt||frameN%2===1)){try{HX=handFeat(hands.detectForVideo(video,now),now);HXt=now}catch(e){console.warn(e)}}
+      else if(!S.hands)HX=[];
+      procE+=(performance.now()-t1-procE)*.1;alt=MOBILE||procE>28;
+      if(lastFr){fpsE+=(1000/Math.max(1,now-lastFr)-fpsE)*.1}lastFr=now;
+    }
+    grab(now);
+  }
+  const dt=Math.min(100,now-lastStep);lastStep=now;
+  if(running&&(face||hands))step(now,dt);
+  drawOv(now);
+  if(running){const s=(now-t0)/1000;$('#clock').textContent=`${String(Math.floor(s)).padStart(2,'0')}.${String(Math.floor(s%1*100)).padStart(2,'0')}`}
+  if(now-lastDbg>200){lastDbg=now;dbg(now)}
+}
+function dbg(now){
+  const el=$('#dbg');el.classList.toggle('on',!!S.debug);
+  if(running&&(face||hands)){const f=now-FXt<350?FX:null,hs=now-HXt<350?HX:[];
+    status(`${f?'face ✓':'no face'} · hands ${S.hands?hs.length:'off'} · ${Math.round(fpsE)} fps${MOBILE?'':' · '+DELEG}${S.key?` · GIPHY ${callsHour()}/100`:''}`)}
+  if(!S.debug)return;
+  const f=now-FXt<350?FX:null,hs=now-HXt<350?HX:[];
+  const bar=(k,v)=>`<div class="b"><span>${k}</span><s style="width:${Math.round(Math.min(1,Math.max(0,v))*110)}px"></s><span style="width:auto">${v.toFixed(2)}</span></div>`;
+  let h=`<b>delegate</b> ${DELEG} · proc ${procE.toFixed(0)}ms${alt?' (alternating)':''}<br>`;
+  if(f){h+=bar('smile',f.smile)+bar('jawOpen',f.jaw)+bar('browInnerUp',f.g('browInnerUp'))+bar('browOuterUp',f.av('browOuterUpLeft','browOuterUpRight'))+bar('browDown',f.av('browDownLeft','browDownRight'))+bar('frown',f.av('mouthFrownLeft','mouthFrownRight'))+bar('pucker',f.g('mouthPucker'))+bar('cheekPuff',f.g('cheekPuff'))+bar('squint',f.av('eyeSquintLeft','eyeSquintRight'))+bar('eyeWide',f.av('eyeWideLeft','eyeWideRight'))+bar('blink',f.av('eyeBlinkLeft','eyeBlinkRight'))+bar('eyes sideways',lookSide(f));
+    h+=`yaw ${f.yaw.toFixed(2)} · pitch ${f.pitch.toFixed(2)} · roll ${f.roll.toFixed(0)}°<br>calm ${(E.calm/1000).toFixed(1)}s<br>`}
+  else h+='no face<br>';
+  hs.forEach(H=>{h+=`<b>${esc(H.side)}</b> ${H.gest} · fingers ${H.n}${H.thumbOut?'+T':''} · energy ${H.h.energy.toFixed(1)} · speed ${H.h.speed.toFixed(2)}<br>`});
+  const act=TRIG.filter(t=>t.acc>0).map(t=>`${t.id} ${Math.round(t.acc)}ms`).join(', ');h+=`<b>active</b> ${act||'—'}`;
+  el.innerHTML=h;
+}
+
+/* ---------- start ---------- */
+async function initModels(){
+  status('loading tracking models…');
+  const {FilesetResolver,FaceLandmarker,HandLandmarker}=await import(MP.lib);
+  const fs=await FilesetResolver.forVisionTasks(MP.wasm);
+  const mk=delegate=>Promise.all([
+    FaceLandmarker.createFromOptions(fs,{baseOptions:{modelAssetPath:MP.face,delegate},runningMode:'VIDEO',numFaces:1,outputFaceBlendshapes:true}),
+    HandLandmarker.createFromOptions(fs,{baseOptions:{modelAssetPath:MP.hand,delegate},runningMode:'VIDEO',numHands:2,minHandDetectionConfidence:.5,minHandPresenceConfidence:.5,minTrackingConfidence:.5})]);
+  try{[face,hands]=await mk('GPU');DELEG='GPU'}catch(e){console.warn('GPU delegate failed, using CPU',e);[face,hands]=await mk('CPU');DELEG='CPU'}
+}
+const UA=navigator.userAgent||'';
+const IOS=/iPhone|iPad|iPod/.test(UA)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1),ANDROID=/Android/.test(UA);
+const IN_FRAME=(()=>{try{return window.self!==window.top}catch(e){return true}})();
+const IN_APP=/Instagram|FBAN|FBAV|FB_IAB|Snapchat|TikTok|musical_ly|Bytedance|LinkedInApp|Line\//.test(UA);
+const HOST_HELP=' To put it online from your phone: save the file to Files, open tiiny.host in Safari, tap Upload file, pick the file and sign up free. Then open the tiiny.site link it gives you.';
+/* the reasons a phone refuses the camera before it even asks */
+function camBlocker(){
+  if(IN_FRAME)return 'This page is open inside a preview window, which can\'t use the camera. It needs to be its own page in Safari or Chrome.'+HOST_HELP;
+  if(IN_APP)return 'This app\'s built-in browser blocks the camera. Tap the ⋯ menu and choose Open in Safari (or Open in browser).';
+  if(location.protocol==='file:'&&MOBILE)return 'Phones block the camera on downloaded files. The page has to be opened from an https link.'+HOST_HELP;
+  if(!window.isSecureContext)return 'This page isn\'t on a secure https address, so the browser blocks the camera.'+(location.protocol==='http:'?' Try the same link starting with https://':HOST_HELP);
+  if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia)return 'This browser view can\'t use the camera. Open the page in Safari or Chrome.'+HOST_HELP;
+  return '';
+}
+function camErr(e){
+  const n=e&&e.name,pre=camBlocker();if(pre)return pre;
+  if(n==='NotAllowedError'||n==='SecurityError'){
+    if(IOS)return 'Camera access is blocked for this site. In Safari: tap aA in the address bar, then Website Settings, then Camera: Allow, and reload. In Chrome on iPhone: open the Settings app, then Chrome, and turn on Camera.';
+    if(ANDROID)return 'Camera access is blocked for this site. Tap the icon left of the address, then Permissions, then Camera: Allow, and reload. If that doesn\'t help: Settings, Apps, Chrome, Permissions, Camera.';
+    return 'Camera access was blocked. Click the camera icon in the address bar, allow it, then press Start again.';
+  }
+  if(n==='NotFoundError'||n==='OverconstrainedError')return 'No camera found. Plug one in, or use manual mode.';
+  if(n==='NotReadableError')return 'The camera is busy in another app (FaceTime, Zoom, the Camera app…). Close it and try again.';
+  return 'Could not start the camera'+(n?` (${n})`:'')+'. Try Safari or Chrome, or use manual mode.';
+}
+function readStart(){S.name=$('#iName').value.trim();S.key=$('#iKey').value.trim();save();syncSet()}
+$('#iName').value=S.name;$('#iKey').value=S.key;
+{const cb=camBlocker();if(cb){$('#secure').textContent=cb;$('#secure').hidden=false}}
+async function openCam(){
+  if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia)throw {name:'Unsupported'};
+  const v=MOBILE?{facingMode:facing,width:{ideal:640},height:{ideal:480}}:{facingMode:facing,width:{ideal:1280},height:{ideal:720}};
+  const s=await navigator.mediaDevices.getUserMedia({video:v,audio:false});
+  if(stream)stream.getTracks().forEach(t=>t.stop());
+  stream=s;video.srcObject=s;try{await video.play()}catch(e){}
+}
+let wl=null;
+async function wake(){try{if(running&&'wakeLock' in navigator&&document.visibilityState==='visible'&&!wl){wl=await navigator.wakeLock.request('screen');wl.addEventListener('release',()=>{wl=null})}}catch(e){}}
+document.addEventListener('visibilitychange',wake);
+$('#bFlip').onclick=async()=>{
+  if(!running)return;const prev=facing;facing=facing==='user'?'environment':'user';
+  try{await openCam();syncSet();toast(facing==='user'?'Front camera':'Back camera')}catch(e){facing=prev;toast('Could not switch cameras')}
+};
+$('#go').onclick=async()=>{
+  readStart();$('#err').textContent='';const b=$('#go');b.disabled=true;b.textContent='Starting…';
+  try{await openCam()}
+  catch(e){console.warn('camera',e);$('#err').textContent=camErr(e);$('#secure').hidden=true;b.disabled=false;b.textContent='Try again';return}
+  $('#start').classList.add('off');running=true;t0=performance.now();sizeRain();wake();
+  try{await initModels();status('tracking');toast('Tracking on. Try a face or a gesture, or open Reactions for the full list.',4200)}
+  catch(e){console.error(e);status('tracking unavailable · manual mode');toast('Could not load the tracking models (needs internet). Space and the Reactions list still work.',6000)}
+};
+$('#manual').onclick=()=>{readStart();$('#start').classList.add('off');t0=performance.now();sizeRain();status('manual mode · press Space or open Reactions');toast('Manual mode: press Space for a random reaction, or fire any from the Reactions list.',4200)};
+
+/* ---------- panels ---------- */
+function openPanel(id){document.querySelectorAll('.panel').forEach(p=>p.classList.toggle('on',p.id===id));if(id==='lib')renderLib();if(id==='set')syncSet()}
+function closePanels(){document.querySelectorAll('.panel').forEach(p=>p.classList.remove('on'))}
+document.querySelectorAll('[data-close]').forEach(b=>b.onclick=closePanels);
+$('#bLib').onclick=()=>openPanel('lib');$('#bSet').onclick=()=>openPanel('set');$('#bRand').onclick=randomFire;
+function renderLib(){
+  const q=($('#libQ').value||'').toLowerCase().trim();
+  $('#libCount').textContent=`${TRIG.length} triggers · ${TRIG.reduce((s,t)=>s+t.memes.length,0)} memes`;
+  $('#libList').innerHTML=Object.keys(G).map(g=>{
+    const ts=TRIG.filter(t=>t.grp===g&&(!q||(t.name+' '+t.how+' '+t.memes.map(m=>m.label).join(' ')).toLowerCase().includes(q)));
+    if(!ts.length)return '';
+    return `<div class="grp">${G[g]} · ${ts.length}</div>`+ts.map(t=>{const n=(clips[t.id]||[]).length;
+      return `<div class="tr"><h5>${esc(t.name)} <span class="chip">${t.memes.length} memes</span>${n?`<span class="chip">${n} yours</span>`:''}</h5><p>${esc(t.how)}</p><div class="mm">${t.memes.map(m=>esc(m.label)).join(' · ')}</div><div class="row"><button class="tb" data-fire="${t.id}">Fire</button><label class="tb">+ Your clip<input type="file" accept="image/*,video/*" data-add="${t.id}" hidden multiple></label>${n?`<button class="tb" data-clear="${t.id}">Clear yours</button>`:''}</div></div>`}).join('');
+  }).join('')||'<p class="hint">No matches.</p>';
+}
+$('#libQ').oninput=renderLib;
+$('#libList').addEventListener('click',async e=>{
+  const f=e.target.closest('[data-fire]');if(f){closePanels();fireT(T[f.dataset.fire]);return}
+  const c=e.target.closest('[data-clear]');
+  if(c){try{const id=c.dataset.clear;for(const x of clips[id]||[])await IDB.req('readwrite',s=>s.delete(x.id));await loadClips();renderLib();toast('Removed your clips')}catch(err){toast('Could not remove clips')}}
+});
+$('#libList').addEventListener('change',async e=>{
+  const inp=e.target.closest('[data-add]');if(!inp||!inp.files.length)return;
+  try{if(!IDB.db)await IDB.open();let n=0;
+    for(const file of inp.files){if(!/^(image|video)\//.test(file.type))continue;await IDB.req('readwrite',s=>s.add({trig:inp.dataset.add,name:file.name,type:file.type,blob:file}));n++}
+    await loadClips();renderLib();toast(`Added ${n} clip${n===1?'':'s'} to ${T[inp.dataset.add].name}`)}
+  catch(err){toast('Could not save that clip in this browser')}
+});
+
+/* ---------- settings ---------- */
+const fmt={sens:v=>(+v).toFixed(2)+'×',cool:v=>(+v).toFixed(1)+' s',life:v=>v+' s',maxWin:v=>v};
+function syncSet(){
+  document.querySelectorAll('#set [data-k]').forEach(i=>{if(i===document.activeElement&&i.type!=='checkbox'&&i.type!=='range')return;const k=i.dataset.k;if(i.type==='checkbox')i.checked=!!S[k];else i.value=S[k]});
+  $('#vSens').textContent=fmt.sens(S.sens);$('#vCool').textContent=fmt.cool(S.cool);$('#vLife').textContent=fmt.life(S.life);$('#vMax').textContent=S.maxWin;
+  $('#app').classList.toggle('norain',!S.rain);stage.classList.toggle('mirror',!!mir());updUsage();
+}
+function updUsage(){const u=$('#usage');if(u)u.textContent=S.key?`${callsHour()} of 100 GIPHY searches used this hour · ${Object.keys(gcache).length} searches cached`:'No key: reactions use built-in cards.'}
+document.querySelectorAll('#set [data-k]').forEach(i=>{
+  i.addEventListener(i.type==='range'||i.type==='text'||i.type==='password'?'input':'change',()=>{
+    const k=i.dataset.k;S[k]=i.type==='checkbox'?i.checked:i.type==='range'?+i.value:i.value;
+    save();syncSet();if(k==='rain')setTimeout(sizeRain,30)})});
+$('#testKey').onclick=async()=>{if(!S.key){toast('Paste a key first');return}try{const it=await giphy('thumbs up',true);toast(it.length?'Key works: GIFs are on':'Key works, but that search came back empty')}catch(e){toast(e.message,4200)}};
+$('#clrCache').onclick=()=>{gcache={};store.set('gcache',gcache);updUsage();toast('GIF cache cleared')};
+
+/* ---------- keys + boot ---------- */
+addEventListener('keydown',e=>{
+  if(e.target.matches('input,select,textarea')||!$('#start').classList.contains('off'))return;
+  if(e.code==='Space'){e.preventDefault();randomFire()}
+  else if(e.key==='Escape'){[...wins].forEach(w=>w.close());closePanels()}
+  else if(e.key==='l'||e.key==='L'){$('#lib').classList.contains('on')?closePanels():openPanel('lib')}
+  else if(e.key==='d'||e.key==='D'){S.debug=!S.debug;save();syncSet()}
+  else if(e.key==='r'||e.key==='R'){S.rain=!S.rain;save();syncSet();setTimeout(sizeRain,30)}
+});
+addEventListener('resize',()=>sizeRain());
+addEventListener('orientationchange',()=>setTimeout(sizeRain,300));
+syncSet();sizeRain();loadClips();requestAnimationFrame(loop);
+}
+</script>
+</body>
+</html>
